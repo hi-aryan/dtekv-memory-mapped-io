@@ -1,0 +1,22 @@
+# Build artifacts
+*.o
+*.bin
+*.elf
+*.elf.txt
+*.a
+*.map
+*.hex
+*.exe
+
+# Misc
+*.d
+*.obj
+*.log
+core
+
+# OS / editor files
+Thumbs.db
+.DS_Store
+*.swp
+.vscode/
+.idea/
