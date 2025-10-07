@@ -34,6 +34,22 @@ typedef struct {
     Point direction; // e.g., {x:1, y:0} for right
 } Snake;
 
+// --- Random Number Generation (Simple LCG) ---
+static unsigned int random_seed = 1;
+
+unsigned int simple_rand(void) {
+    random_seed = (random_seed * 1103515245 + 12345) & 0x7fffffff;
+    return random_seed;
+}
+
+void seed_random(unsigned int seed) {
+    random_seed = seed;
+}
+
+int random_int(int min, int max) {
+    return min + (simple_rand() % (max - min + 1));
+}
+
 // --- Global Game State ---
 Snake snake;
 Point food;
@@ -48,6 +64,10 @@ void read_input(void);
 void draw_graphics(void);
 void draw_pixel(int x, int y, uint8_t color);
 void draw_rect(int x, int y, int width, int height, uint8_t color);
+unsigned int simple_rand(void);
+void seed_random(unsigned int seed);
+int random_int(int min, int max);
+unsigned int wait_for_button_and_get_timing(void);
 
 /**
  * @brief Interrupt Service Routine
@@ -69,9 +89,42 @@ void handle_interrupt(unsigned cause) {
 }
 
 /**
+ * @brief Waits for button press and returns timing value for seeding RNG
+ * This provides true randomness based on user input timing
+ */
+unsigned int wait_for_button_and_get_timing(void) {
+    unsigned int start_time = 0;
+    unsigned int end_time = 0;
+
+    // Wait for button release first (in case it's already pressed)
+    while (*BUTTONS & 0x1) {
+        // Busy wait
+    }
+
+    // Wait for button press and measure timing
+    while (!(*BUTTONS & 0x1)) {
+        start_time++;
+    }
+
+    end_time = start_time;
+
+    // Keep measuring until button is released for more entropy
+    while (*BUTTONS & 0x1) {
+        end_time++;
+    }
+
+    // Combine start and end times for better entropy
+    return start_time ^ end_time;
+}
+
+/**
  * @brief Main entry point
  */
 int main() {
+    // Seed random number generator with button press timing
+    unsigned int seed = wait_for_button_and_get_timing();
+    seed_random(seed);
+
     initialize_game();
     while (1) {
         // The main loop does nothing. Everything is handled by interrupts.
@@ -100,9 +153,10 @@ void initialize_game(void) {
     snake.body[2] = (Point){20, 30};
     snake.direction = (Point){10, 0}; // Moving right
 
-    // Initialize food (pseudo-random)
-    food.x = 100;
-    food.y = 100;
+    // Initialize food at random position (within grid boundaries)
+    // Screen is 320x240 pixels with 10x10 squares = 32x24 grid
+    food.x = random_int(0, 31) * 10; // 0-31 for x coordinate
+    food.y = random_int(0, 23) * 10; // 0-23 for y coordinate
 
     // Draw the initial screen
     draw_graphics();
@@ -140,14 +194,12 @@ void update_game(void) {
     // First, calculate the potential new head position
     Point new_head = {snake.body[0].x + snake.direction.x, snake.body[0].y + snake.direction.y};
 
-    // --- FIX START: Check for collisions BEFORE moving ---
     // Check wall collision
     if (new_head.x < 0 || new_head.x >= SCREEN_WIDTH || new_head.y < 0 || new_head.y >= SCREEN_HEIGHT) {
         game_over = 1;
         return; // End the game here
     }
-    // (We will add the self-collision check here later)
-    // --- FIX END ---
+    // TODO: add self-collision check here
 
     // If we're here, the move is safe. Now we update the snake's body.
     for (int i = snake.length - 1; i > 0; i--) {
@@ -157,17 +209,36 @@ void update_game(void) {
     
     // Check food collision
     if (new_head.x == food.x && new_head.y == food.y) {
-        // --- FIX START: Initialize the new tail segment immediately ---
+        // Initialize the new tail segment immediately ---
         // Get the position of the old tail before we increment length
         Point old_tail_pos = snake.body[snake.length - 1]; 
         snake.length++; // Now increase the length
         // The new tail segment is at the new end of the array. Give it a valid position.
         snake.body[snake.length - 1] = old_tail_pos;
-        // --- FIX END ---
 
-        // Relocate food
-        food.x = ((food.x * 5 + 17) % (SCREEN_WIDTH/10)) * 10;
-        food.y = ((food.y * 3 + 29) % (SCREEN_HEIGHT/10)) * 10;
+        // Relocate food to new random position
+        // Avoid placing food on snake body by checking collisions
+        int attempts = 0;
+        const int MAX_ATTEMPTS = 100;
+
+        do {
+            food.x = random_int(0, 31) * 10;
+            food.y = random_int(0, 23) * 10;
+            attempts++;
+
+            // Check if food position conflicts with snake body
+            int collision = 0;
+            for (int i = 0; i < snake.length && !collision; i++) {
+                if (food.x == snake.body[i].x && food.y == snake.body[i].y) {
+                    collision = 1;
+                }
+            }
+
+            if (!collision) break;
+        } while (attempts < MAX_ATTEMPTS);
+
+        // If we couldn't find a safe spot after many attempts, just place it anyway
+        // This prevents infinite loops in edge cases
     }
 }
 
