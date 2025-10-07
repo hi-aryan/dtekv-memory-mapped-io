@@ -19,7 +19,11 @@ volatile uint32_t * const TIMER_PERIOD_H = (uint32_t *) 0x400002C;
 volatile uint32_t * const SWITCHES = (uint32_t *) 0x4000010;
 volatile uint32_t * const BUTTONS = (uint32_t *) 0x40000d0;
 
+// not used yet
+volatile uint32_t * const LEDS = (uint32_t *) 0x4000000;
+
 volatile uint32_t * const SWITCH_EDGECAPTURE = (uint32_t *) 0x400001C;
+volatile uint32_t * const SWITCH_INTERRUPTMASK = (uint32_t *) 0x4000018;
 
 volatile uint8_t * const VGA_BUFFER = (uint8_t *) 0x8000000;
 
@@ -103,9 +107,6 @@ void handle_interrupt(unsigned cause) {
         // Acknowledge the interrupt so it doesn't keep firing.
         // We write to the edge capture register to clear it.
         *SWITCH_EDGECAPTURE = 0x3FF; // Acknowledge any of the 10 switches
-
-        // Toggle the very first LED every time a switch is flipped.
-        // *LEDS = *LEDS ^ 0x1; 
     }
 
     // Note: Button interrupts are not needed for the game loop
@@ -171,6 +172,8 @@ void initialize_game(void) {
     // Start timer with continuous mode and interrupt enabled
     *TIMER_CONTROL = 0x7; // CONT=1, ITO=1, START=1
 
+    *SWITCH_INTERRUPTMASK = 0x3; // Enable interrupts for SW0 and SW1 (bits 0-1)
+
     enable_switch_interrupts();
     enable_timer_interrupts();
 
@@ -230,7 +233,13 @@ void update_game(void) {
         game_over = 1;
         return; // End the game here
     }
-    // TODO: add self-collision check here
+
+    for (int i = 1; i < snake.length; i++) {
+        if (new_head.x == snake.body[i].x && new_head.y == snake.body[i].y) {
+            game_over = 1;
+            return; // End the game
+        }
+    }
 
     // If we're here, the move is safe. Now we update the snake's body.
     for (int i = snake.length - 1; i > 0; i--) {
