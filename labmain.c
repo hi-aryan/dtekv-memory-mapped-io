@@ -75,6 +75,11 @@ int tick_counter = 0;
 int button_pressed_last_frame = 0;
 unsigned int random_timer = 0; // Increments every interrupt for random seed
 
+// --- Menu Selection State ---
+int menu_selection = 0;          // 0 = easy, 1 = hard (toggled by SW0)
+int last_menu_selection = -1;    // Debouncing: track last value to prevent flicker
+int game_difficulty = 0;         // Stored difficulty for current game
+
 // FOR TIMER TESTING
 int test_seconds = 0;
 int test_tick_counter = 0;
@@ -136,6 +141,7 @@ void handle_interrupt(unsigned cause) {
         // Draw static screens only when state changes (prevents flickering)
         if (current_state != previous_state) {
             if (current_state == STATE_MENU) {
+                last_menu_selection = -1;  // Reset to force initial draw
                 draw_menu();
             } else if (current_state == STATE_GAME_OVER) {
                 box_width = 200;  // Reset animation on state entry
@@ -200,10 +206,21 @@ void handle_interrupt(unsigned cause) {
     else if (cause == 17) { // Switch interrupt
         *SWITCH_EDGECAPTURE = 0x3FF;
         
-        // Only read input during gameplay
+        // State-specific switch handling
         if (current_state == STATE_PLAYING) {
-            // movement input
+            // Gameplay: SW0 and SW1 control direction
             read_input();
+        } 
+        else if (current_state == STATE_MENU) {
+            // Menu: SW0 toggles difficulty selection
+            int new_selection = (*SWITCHES & 0x1) ? 1 : 0;
+            
+            // Only redraw if selection actually changed (to stop flickering)
+            if (new_selection != last_menu_selection) {
+                menu_selection = new_selection;
+                last_menu_selection = new_selection;
+                draw_menu();
+            }
         }
     }
 }
@@ -271,6 +288,10 @@ void check_button_input(void) {
     // Detect button press edge (was not pressed, now pressed)
     if (button_pressed_now && !button_pressed_last_frame) {
         if (current_state == STATE_MENU) {
+            
+            // TODO: selected difficulty stored for future use
+            game_difficulty = menu_selection;
+            
             // Seed with timer value - different each time button is pressed
             seed_random(random_timer);
             reset_game();
@@ -400,19 +421,44 @@ void draw_menu(void) {
     draw_letter('K', 155, 40, 0x33);
     draw_letter('E', 180, 40, 0xF1);
     
-    draw_letter('P', 40, 120, 0xFF);
-    draw_letter('R', 65, 120, 0xFF);
-    draw_letter('E', 90, 120, 0xFF);
-    draw_letter('S', 115, 120, 0xFF);
-    draw_letter('S', 140, 120, 0xFF);
+    draw_letter('P', 20, 120, 0xFF);
+    draw_letter('R', 45, 120, 0xFF);
+    draw_letter('E', 70, 120, 0xFF);
+    draw_letter('S', 95, 120, 0xFF);
+    draw_letter('S', 120, 120, 0xFF);
     
-    draw_letter('B', 50, 160, 0xFF);
-    draw_letter('U', 75, 160, 0xFF);
-    draw_letter('T', 100, 160, 0xFF);
-    draw_letter('T', 125, 160, 0xFF);
-    draw_letter('O', 150, 160, 0xFF);
-    draw_letter('N', 175, 160, 0xFF);
+    draw_letter('B', 30, 160, 0xFF);
+    draw_letter('U', 55, 160, 0xFF);
+    draw_letter('T', 80, 160, 0xFF);
+    draw_letter('T', 105, 160, 0xFF);
+    draw_letter('O', 130, 160, 0xFF);
+    draw_letter('N', 155, 160, 0xFF);
+
+    draw_letter('T', 10, 200, 0xFF);
+    draw_letter('O', 35, 200, 0xFF);
+
+    draw_letter('S', 70, 200, 0xFF);
+    draw_letter('E', 95, 200, 0xFF);
+    draw_letter('L', 120, 200, 0xFF);
+    draw_letter('E', 145, 200, 0xFF);
+    draw_letter('C', 170, 200, 0xFF);
+    draw_letter('T', 195, 200, 0xFF);
+
+    // --- Difficulty Selection (SW0 toggles) ---
+    // EASY - highlighted if menu_selection == 0
+    uint8_t easy_color = (menu_selection == 0) ? 0x1D : 0x24;  // Bright green if selected, dim if not
+    draw_letter('E', 215, 90, easy_color);
+    draw_letter('A', 240, 90, easy_color);
+    draw_letter('S', 265, 90, easy_color);
+    draw_letter('Y', 290, 90, easy_color);
     
+    // HARD - highlighted if menu_selection == 1
+    uint8_t hard_color = (menu_selection == 1) ? 0xE1 : 0x24;  // Bright red if selected, dim if not
+    draw_letter('H', 215, 130, hard_color);
+    draw_letter('A', 240, 130, hard_color);
+    draw_letter('R', 265, 130, hard_color);
+    draw_letter('D', 290, 130, hard_color);
+
     // FOR TEST ALL LETTERS
     
     // int x_pos = 10;
