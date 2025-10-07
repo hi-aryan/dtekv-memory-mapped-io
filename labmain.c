@@ -1,7 +1,6 @@
-// 00 (both switches UP): Tries to move UP.
-// 01 (SW0 DOWN, SW1 UP): Tries to move DOWN.
-// 10 (SW0 UP, SW1 DOWN): Tries to move LEFT.
-// 11 (both switches DOWN): Tries to move RIGHT.
+// TODO: game-over scene
+// levels (with ghost hunting you or something)
+// TODO: multiplayer
 
 #include <stdint.h> // For standard integer types
 
@@ -71,9 +70,12 @@ GameState previous_state = STATE_PLAYING; // Track state changes
 Snake snake;
 Point food;
 int tick_counter = 0;
-const int TICKS_PER_MOVE = 10;
 int button_pressed_last_frame = 0;
 unsigned int random_timer = 0; // Increments every interrupt for random seed
+
+// FOR TIMER TESTING
+int test_seconds = 0;
+int test_tick_counter = 0;
 
 // --- 7-Segment Display Functions ---
 // task e - from oldlabinterrupts.c
@@ -141,10 +143,30 @@ void handle_interrupt(unsigned cause) {
                 
             case STATE_PLAYING:
                 tick_counter++;
-                if (tick_counter >= TICKS_PER_MOVE) {
-                    tick_counter = 0;
+                // speed is new ticks_per_move
+                int speed = 10;
+                // If switch nr 5 (from right to left) is up, use fast speed
+                if (*SWITCHES & (1 << 4)) {
+                    speed = 5;
+                }
+
+                if (tick_counter >= speed) {
+                    tick_counter = 0; // update game every speed interrupts
                     update_game();
                     draw_game();
+                }
+                test_tick_counter++;
+                if (test_tick_counter >= 30) {  // 30 interrupts = 1 second at 30Hz
+                    test_tick_counter = 0;
+                    test_seconds++;
+                    if (test_seconds >= 60) {
+                        test_seconds = 0;
+                    }
+                    // Update displays 4-5 with current seconds
+                    int tens = (test_seconds / 10) % 10;
+                    int ones = test_seconds % 10;
+                    set_displays(4, segment_map[ones]);
+                    set_displays(5, segment_map[tens]);
                 }
                 break;
                 
@@ -158,6 +180,7 @@ void handle_interrupt(unsigned cause) {
         
         // Only read input during gameplay
         if (current_state == STATE_PLAYING) {
+            // movement input
             read_input();
         }
     }
@@ -347,40 +370,38 @@ void clear_screen(uint8_t color) {
 void draw_menu(void) {
     clear_screen(0x03); // Dark blue background
     
-    // Example: Draw "SNAKE" title using letter functions
-    // draw_letter('S', 80, 60, 0x1C);   // Green S at (80, 60)
-    // draw_letter('N', 105, 60, 0x1C);  // Green N at (105, 60) - 25px spacing
-    // draw_letter('A', 130, 60, 0x1C);  // Green A
-    // draw_letter('K', 155, 60, 0x1C);  // Green K
-    // draw_letter('E', 180, 60, 0x1C);  // Green E
+    draw_letter('S', 80, 40, 0x1C);   // Green S at (80, 60)
+    draw_letter('N', 105, 40, 0xE1);  // Green N at (105, 60) - 25px spacing
+    draw_letter('A', 130, 40, 0xD3);  // Green A
+    draw_letter('K', 155, 40, 0x33);  // Green K
+    draw_letter('E', 180, 40, 0xF1);  // Green E
     
-    // // Example: Draw "PRESS BUTTON" message
-    // draw_letter('P', 40, 120, 0xFF);   // White letters
-    // draw_letter('R', 65, 120, 0xFF);
-    // draw_letter('E', 90, 120, 0xFF);
-    // draw_letter('S', 115, 120, 0xFF);
-    // draw_letter('S', 140, 120, 0xFF);
+    // Example: Draw "PRESS BUTTON" message
+    draw_letter('P', 40, 120, 0xFF);   // White letters
+    draw_letter('R', 65, 120, 0xFF);
+    draw_letter('E', 90, 120, 0xFF);
+    draw_letter('S', 115, 120, 0xFF);
+    draw_letter('S', 140, 120, 0xFF);
     
-    // draw_letter('B', 50, 160, 0xFF);
-    // draw_letter('U', 75, 160, 0xFF);
-    // draw_letter('T', 100, 160, 0xFF);
-    // draw_letter('T', 125, 160, 0xFF);
-    // draw_letter('O', 150, 160, 0xFF);
-    draw_letter('N', 175, 160, 0x1C);
+    draw_letter('B', 50, 160, 0xFF);
+    draw_letter('U', 75, 160, 0xFF);
+    draw_letter('T', 100, 160, 0xFF);
+    draw_letter('T', 125, 160, 0xFF);
+    draw_letter('O', 150, 160, 0xFF);
+    draw_letter('N', 175, 160, 0xFF);
     
-    // TEST ALL LETTERS (comment out when done testing)
-    // Uncomment the section below to see all 26 letters:
+    // FOR TEST ALL LETTERS
     
-    int x_pos = 10;
-    int y_pos = 20;
-    for (char c = 'A'; c <= 'Z'; c++) {
-        draw_letter(c, x_pos, y_pos, 0xFF);
-        x_pos += 25;  // 20px letter + 5px spacing
-        if (x_pos > 300) {  // Wrap to next line if needed
-            x_pos = 10;
-            y_pos += 35;
-        }
-    }
+    // int x_pos = 10;
+    // int y_pos = 20;
+    // for (char c = 'A'; c <= 'Z'; c++) {
+    //     draw_letter(c, x_pos, y_pos, 0xFF);
+    //     x_pos += 25;  // 20px letter + 5px spacing
+    //     if (x_pos > 300) {  // Wrap to next line if needed
+    //         x_pos = 10;
+    //         y_pos += 35;
+    //     }
+    // }
     
 }
 
@@ -442,9 +463,8 @@ void display_score(int score) {
     set_displays(2, segment_map[hundreds]);
     set_displays(3, segment_map[thousands]);
 
-    // Optional: Display additional digits if score gets very high
-    set_displays(4, segment_map[0]); // Always show 0 for now
-    set_displays(5, segment_map[0]); // Always show 0 for now
+    // set_displays(4, segment_map[0]); // Always show 0 for now
+    // set_displays(5, segment_map[0]); // Always show 0 for now
 }
 
 /**
