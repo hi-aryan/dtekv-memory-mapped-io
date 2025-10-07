@@ -1,6 +1,8 @@
 // TODO: game-over scene
-// levels (with ghost hunting you or something)
+// TODO: levels (with ghost hunting you or something)
 // TODO: multiplayer
+// TODO: animations
+// TODO: leaderboard
 
 #include <stdint.h> // For standard integer types
 
@@ -77,6 +79,11 @@ unsigned int random_timer = 0; // Increments every interrupt for random seed
 int test_seconds = 0;
 int test_tick_counter = 0;
 
+// test animation for game over box
+// TODO: remove?
+int box_width = 200;  // Current width (starts at full)
+int animating_box = 1;  // Flag to start animation
+
 // --- 7-Segment Display Functions ---
 // task e - from oldlabinterrupts.c
 void set_displays(int display_number, int value) {
@@ -93,6 +100,7 @@ void clear_screen(uint8_t color);
 void draw_menu(void);
 void draw_game(void);
 void draw_game_over(void);
+void draw_game_over_animated(void);  // test animation: draw only the animated box
 void draw_pixel(int x, int y, uint8_t color);
 void draw_rect(int x, int y, int width, int height, uint8_t color);
 void set_displays(int display_number, int value);
@@ -130,7 +138,9 @@ void handle_interrupt(unsigned cause) {
             if (current_state == STATE_MENU) {
                 draw_menu();
             } else if (current_state == STATE_GAME_OVER) {
-                draw_game_over();
+                box_width = 200;  // Reset animation on state entry
+                animating_box = 1;
+                draw_game_over();  // Initial full draw
             }
             previous_state = current_state;
         }
@@ -172,6 +182,18 @@ void handle_interrupt(unsigned cause) {
                 
             case STATE_GAME_OVER:
                 check_button_input();
+
+                // for test box animation
+                if (animating_box && box_width > 0) {
+                    box_width -= 1;  // Shrink by 1 pixel per frame (adjust for speed)
+                    if (box_width <= 0) {
+                        box_width = 0;
+                        animating_box = 0;  // Stop animation when it hits 0
+                    }
+                    // Update only the animated box
+                    draw_game_over_animated();
+                }
+
                 break;
         }
     } 
@@ -254,6 +276,8 @@ void check_button_input(void) {
             reset_game();
             current_state = STATE_PLAYING;
         }
+        // reset game on game over
+        // TODO: make sure it stores highscores and stuff later!
         else if (current_state == STATE_GAME_OVER) {
             current_state = STATE_MENU;
         }
@@ -370,14 +394,13 @@ void clear_screen(uint8_t color) {
 void draw_menu(void) {
     clear_screen(0x03); // Dark blue background
     
-    draw_letter('S', 80, 40, 0x1C);   // Green S at (80, 60)
-    draw_letter('N', 105, 40, 0xE1);  // Green N at (105, 60) - 25px spacing
-    draw_letter('A', 130, 40, 0xD3);  // Green A
-    draw_letter('K', 155, 40, 0x33);  // Green K
-    draw_letter('E', 180, 40, 0xF1);  // Green E
+    draw_letter('S', 80, 40, 0x1C);
+    draw_letter('N', 105, 40, 0xE1);
+    draw_letter('A', 130, 40, 0xD3);
+    draw_letter('K', 155, 40, 0x33);
+    draw_letter('E', 180, 40, 0xF1);
     
-    // Example: Draw "PRESS BUTTON" message
-    draw_letter('P', 40, 120, 0xFF);   // White letters
+    draw_letter('P', 40, 120, 0xFF);
     draw_letter('R', 65, 120, 0xFF);
     draw_letter('E', 90, 120, 0xFF);
     draw_letter('S', 115, 120, 0xFF);
@@ -425,21 +448,41 @@ void draw_game(void) {
  * Edit this function to customize the game over appearance.
  */
 void draw_game_over(void) {
-    clear_screen(0xE0); // Red background
-    
-    // Draw "Game Over" box
-    draw_rect(70, 80, 180, 40, 0x00); // Black box
-    
-    // Draw score indicator (simple visual representation)
+    clear_screen(0x00); // black background
+
+    draw_rect(35, 75, 200, 5, 0xE0);  // Initial full width
+
+    // title
+    draw_letter('G', 35, 40, 0xE0);
+    draw_letter('A', 60, 40, 0xE1);
+    draw_letter('M', 85, 40, 0xE2);
+    draw_letter('E', 110, 40, 0xF1);
+
+    draw_letter('O', 140, 40, 0x1C);
+    draw_letter('V', 165, 40, 0xE1);
+    draw_letter('E', 190, 40, 0xD3);
+    draw_letter('R', 215, 40, 0x33);
+
+    draw_rect(240, 67, 3, 3, 0xE0); // red box
+    draw_rect(248, 67, 3, 3, 0xE0); // red box
+
+    // score indicator (simple visual representation)
     // Draw small squares to represent score (snake length)
     int score_x = 100;
     int score_y = 140;
     for (int i = 0; i < snake.length && i < 20; i++) {
         draw_rect(score_x + (i * 6), score_y, 4, 4, 0x1C); // Green dots
     }
-    
-    // Draw "Press Button" message
-    draw_rect(80, 160, 160, 20, 0x00); // Black box
+}
+
+/**
+ * @brief Draws only the animated box for game over (no clearing or static elements).
+ */
+void draw_game_over_animated(void) {
+    // Erase the old box area by drawing black over it (to handle shrinking)
+    draw_rect(35, 75, 200, 5, 0x00);  // Clear the max width area
+    // Draw the new animated box
+    draw_rect(35, 75, box_width, 5, 0xE0);
 }
 
 /**
