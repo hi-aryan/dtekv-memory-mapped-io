@@ -58,153 +58,163 @@ int random_int(int min, int max) {
     return min + (simple_rand() % (max - min + 1));
 }
 
-// --- Simple randomization using timer for entropy ---
-// No complex state machine needed for one-time initialization
+// --- Game State Machine (OOP Pattern) ---
+typedef enum {
+    STATE_MENU,
+    STATE_PLAYING,
+    STATE_GAME_OVER
+} GameState;
 
 // --- Global Game State ---
+GameState current_state = STATE_MENU;
+GameState previous_state = STATE_PLAYING; // Track state changes
 Snake snake;
 Point food;
-int game_over = 0;
-int tick_counter = 0; // For controlling game speed
-const int TICKS_PER_MOVE = 10; // Slower game speed
+int tick_counter = 0;
+const int TICKS_PER_MOVE = 10;
+int button_pressed_last_frame = 0;
 
 // --- Function Prototypes ---
-void initialize_game(void);
+void initialize_hardware(void);
+void reset_game(void);
 void update_game(void);
 void read_input(void);
-void draw_graphics(void);
+void check_button_input(void);
+void clear_screen(uint8_t color);
+void draw_menu(void);
+void draw_game(void);
+void draw_game_over(void);
 void draw_pixel(int x, int y, uint8_t color);
 void draw_rect(int x, int y, int width, int height, uint8_t color);
-unsigned int simple_rand(void);
-void seed_random(unsigned int seed);
-int random_int(int min, int max);
-unsigned int get_random_timing(void);
 
 /**
- * @brief Interrupt Service Routine
- * Handles timer and switch interrupts.
+ * @brief Interrupt Service Routine (State Machine Hub)
+ * Routes timer and switch interrupts based on current game state.
  */
 void handle_interrupt(unsigned cause) {
-    // Cause 16 is for the Timer
-    if (cause == 16) {
-        *TIMER_STATUS = 0; // Acknowledge the timer interrupt
-
-        if (game_over) return;
-
-        tick_counter++;
-        if (tick_counter >= TICKS_PER_MOVE) {
-            tick_counter = 0;
-            // We NO LONGER read input here. The game just updates and draws.
-            update_game(); 
-            draw_graphics();
+    if (cause == 16) { // Timer interrupt
+        *TIMER_STATUS = 0;
+        
+        // Draw static screens only when state changes (prevents flickering)
+        if (current_state != previous_state) {
+            if (current_state == STATE_MENU) {
+                draw_menu();
+            } else if (current_state == STATE_GAME_OVER) {
+                draw_game_over();
+            }
+            previous_state = current_state;
+        }
+        
+        // State machine: different behavior per state
+        switch (current_state) {
+            case STATE_MENU:
+                check_button_input();
+                break;
+                
+            case STATE_PLAYING:
+                tick_counter++;
+                if (tick_counter >= TICKS_PER_MOVE) {
+                    tick_counter = 0;
+                    update_game();
+                    draw_game();
+                }
+                break;
+                
+            case STATE_GAME_OVER:
+                check_button_input();
+                break;
         }
     } 
-    // Cause 17 is for the Switches
-    else if (cause == 17) {
-        // When a switch is flipped, this code runs instantly.
-        read_input();
+    else if (cause == 17) { // Switch interrupt
+        *SWITCH_EDGECAPTURE = 0x3FF;
         
-        // Acknowledge the interrupt so it doesn't keep firing.
-        // We write to the edge capture register to clear it.
-        *SWITCH_EDGECAPTURE = 0x3FF; // Acknowledge any of the 10 switches
+        // Only read input during gameplay
+        if (current_state == STATE_PLAYING) {
+            read_input();
+        }
     }
-
-    // Note: Button interrupts are not needed for the game loop
-    // Randomization uses simple polling during initialization
 }
 
-
-/**
- * @brief Gets random seed using button press timing
- * Simple polling approach - perfect for one-time initialization
- */
-unsigned int get_random_timing(void) {
-    unsigned int start_time = 0;
-    unsigned int end_time = 0;
-
-    // Wait for button release first (in case it's already pressed)
-    while (*BUTTONS & 0x1) {
-        // Busy wait - simple and effective for one-time initialization
-    }
-
-    // Wait for button press and measure timing
-    while (!(*BUTTONS & 0x1)) {
-        start_time++;
-    }
-
-    end_time = start_time;
-
-    // Keep measuring until button is released for more entropy
-    while (*BUTTONS & 0x1) {
-        end_time++;
-    }
-
-    // Combine start and end times for better entropy
-    return start_time ^ end_time;
-}
 
 /**
  * @brief Main entry point
  */
-int main() {
-    // Seed random number generator with button press timing
-    unsigned int seed = get_random_timing();
-    seed_random(seed);
-
-    initialize_game();
+int main(void) {
+    initialize_hardware();
+    
+    // Start in menu state, show menu immediately
+    current_state = STATE_MENU;
+    draw_menu();
+    
     while (1) {
-        // The main loop does nothing. Everything is handled by interrupts.
+        // Everything handled by interrupts
     }
     return 0;
 }
 
 /**
- * @brief Sets up the timer, interrupts, and initial game state.
+ * @brief Sets up hardware: timer, interrupts, and peripherals.
  */
-void initialize_game(void) {
+void initialize_hardware(void) {
     // Set up a timer to interrupt 30 times per second (30Hz)
-    // Clock is 30MHz. 30,000,000 / 30 = 1,000,000 cycles per interrupt.
-    // Period value is N-1. So, 999,999.
-    // 999,999 in hex is 0xF423F
     *TIMER_PERIOD_H = 0x000F;
     *TIMER_PERIOD_L = 0x423F;
+    *TIMER_CONTROL = 0x7;
     
-    // Start timer with continuous mode and interrupt enabled
-    *TIMER_CONTROL = 0x7; // CONT=1, ITO=1, START=1
-
-    *SWITCH_INTERRUPTMASK = 0x3; // Enable interrupts for SW0 and SW1 (bits 0-1)
-
+    *SWITCH_INTERRUPTMASK = 0x3; // Enable interrupts for SW0 and SW1
+    
     enable_switch_interrupts();
     enable_timer_interrupts();
+    enable_interrupt();
+}
 
-    // Initialize snake
+/**
+ * @brief Resets game state for a new game.
+ */
+void reset_game(void) {
+    // Reset snake to initial position
     snake.length = 3;
     snake.body[0] = (Point){40, 30};
     snake.body[1] = (Point){30, 30};
     snake.body[2] = (Point){20, 30};
-    snake.direction = (Point){10, 0}; // Moving right
-
-    // Initialize food at random position (within grid boundaries)
-    // Screen is 320x240 pixels with 10x10 squares = 32x24 grid
-    food.x = random_int(0, 31) * 10; // 0-31 for x coordinate
-    food.y = random_int(0, 23) * 10; // 0-23 for y coordinate
-
-    // Draw the initial screen
-    draw_graphics();
-
-    // Enable interrupts globally
-    enable_interrupt();
+    snake.direction = (Point){10, 0};
+    
+    // Place food at random position
+    food.x = random_int(0, 31) * 10;
+    food.y = random_int(0, 23) * 10;
+    
+    tick_counter = 0;
 }
 
-// TODO: make movement use first 4 SW instead of first 2?
+/**
+ * @brief Handles button input for state transitions.
+ */
+void check_button_input(void) {
+    int button_pressed_now = (*BUTTONS & 0x1);
+    
+    // Detect button press edge (was not pressed, now pressed)
+    if (button_pressed_now && !button_pressed_last_frame) {
+        if (current_state == STATE_MENU) {
+            // Seed random with timer value for entropy
+            seed_random(*TIMER_STATUS ^ tick_counter);
+            reset_game();
+            current_state = STATE_PLAYING;
+        }
+        else if (current_state == STATE_GAME_OVER) {
+            current_state = STATE_MENU;
+        }
+    }
+    
+    button_pressed_last_frame = button_pressed_now;
+}
+
 /**
  * @brief Reads switches to determine snake's next direction.
- * only called when a switch interrupt occurs.
  */
 void read_input(void) {
     uint32_t sw_val = *SWITCHES & 0b11;
     
-    // Only change direction if it's not the opposite way
+    // Only change direction if not opposite
     if (sw_val == 0b00 && snake.direction.y == 0) { 
         snake.direction = (Point){0, -10};
     } 
@@ -224,20 +234,24 @@ void read_input(void) {
  * @brief Updates snake position, checks for collisions and food.
  */
 void update_game(void) {
-
-    // First, calculate the potential new head position
-    Point new_head = {snake.body[0].x + snake.direction.x, snake.body[0].y + snake.direction.y};
+    // Calculate new head position
+    Point new_head = {
+        snake.body[0].x + snake.direction.x, 
+        snake.body[0].y + snake.direction.y
+    };
 
     // Check wall collision
-    if (new_head.x < 0 || new_head.x >= SCREEN_WIDTH || new_head.y < 0 || new_head.y >= SCREEN_HEIGHT) {
-        game_over = 1;
-        return; // End the game here
+    if (new_head.x < 0 || new_head.x >= SCREEN_WIDTH || 
+        new_head.y < 0 || new_head.y >= SCREEN_HEIGHT) {
+        current_state = STATE_GAME_OVER;
+        return;
     }
 
+    // Check self-collision
     for (int i = 1; i < snake.length; i++) {
         if (new_head.x == snake.body[i].x && new_head.y == snake.body[i].y) {
-            game_over = 1;
-            return; // End the game
+            current_state = STATE_GAME_OVER;
+            return;
         }
     }
 
@@ -283,24 +297,63 @@ void update_game(void) {
 }
 
 /**
- * @brief Draws the entire game screen.
+ * @brief Clears the entire screen to a solid color.
  */
-void draw_graphics(void) {
-    // 1. Clear the screen (draw background)
-    // A simple way is to use a nested loop
-    for (int y = 0; y < SCREEN_HEIGHT; y++) {
-        for (int x = 0; x < SCREEN_WIDTH; x++) {
-            draw_pixel(x, y, 0x00); // Black
-        }
+void clear_screen(uint8_t color) {
+    for (int i = 0; i < SCREEN_WIDTH * SCREEN_HEIGHT; i++) {
+        VGA_BUFFER[i] = color;
     }
+}
+
+/**
+ * @brief Draws the menu screen.
+ * Edit this function to customize the menu appearance.
+ */
+void draw_menu(void) {
+    clear_screen(0x03); // Dark blue background
     
-    // 2. Draw the snake
+    // Draw title box
+    draw_rect(60, 60, 200, 50, 0x1C); // Green box
+    
+    // Draw "Press Button" message box
+    draw_rect(80, 130, 160, 30, 0xE0); // White box
+}
+
+/**
+ * @brief Draws the gameplay screen.
+ */
+void draw_game(void) {
+    clear_screen(0x00); // Black background
+    
+    // Draw snake
     for (int i = 0; i < snake.length; i++) {
         draw_rect(snake.body[i].x, snake.body[i].y, 10, 10, 0xE0); // White
     }
     
-    // 3. Draw the food
+    // Draw food
     draw_rect(food.x, food.y, 10, 10, 0x1C); // Green
+}
+
+/**
+ * @brief Draws the game over screen.
+ * Edit this function to customize the game over appearance.
+ */
+void draw_game_over(void) {
+    clear_screen(0xE0); // Red background
+    
+    // Draw "Game Over" box
+    draw_rect(70, 80, 180, 40, 0x00); // Black box
+    
+    // Draw score indicator (simple visual representation)
+    // Draw small squares to represent score (snake length)
+    int score_x = 100;
+    int score_y = 140;
+    for (int i = 0; i < snake.length && i < 20; i++) {
+        draw_rect(score_x + (i * 6), score_y, 4, 4, 0x1C); // Green dots
+    }
+    
+    // Draw "Press Button" message
+    draw_rect(80, 160, 160, 20, 0x00); // Black box
 }
 
 /**
