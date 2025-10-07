@@ -129,18 +129,37 @@ _start:
 	
 loop:	j loop
 
-// 2 av de 3 grejerna which needed turning on for interrupts to work
+/*
+ * enable_interrupt()
+ * Enables interrupts GLOBALLY by setting the MIE bit in the mstatus register.
+ * This should be called ONCE at the end of initialization.
+ */
 .globl enable_interrupt
 enable_interrupt:
-	// Enable Timer Interrupts (IRQ #16) in the Machine Interrupt Enable register (mie)
-	li      t0, 1           # Load immediate 1 into t0
-	slli    t0, t0, 16      # Shift left by 16 to create a mask for bit 16 (0x10000)
-	csrs    mie, t0         # Atomic Read and SET bits in 'mie' CSR using the mask in t0
+    li      t0, 1           # Load immediate 1
+    slli    t0, t0, 3       # Create a mask for bit 3 (Machine Interrupt Enable)
+    csrs    mstatus, t0     # Set the MIE bit in mstatus
+    ret                     # Return from function
 
-	// Enable Global Interrupts in the Machine Status register (mstatus)
-	li      t0, 1           # Load immediate 1 into t0
-	slli    t0, t0, 3       # Shift left by 3 to create a mask for bit 3 (0x8)
-	csrs    mstatus, t0     # Atomic Read and SET bits in 'mstatus' CSR using the mask in t0
+/*
+ * enable_timer_interrupts()
+ * Enables interrupts specifically for the TIMER (IRQ 16).
+ */
+.globl enable_timer_interrupts
+enable_timer_interrupts:
+    li      t0, 1           # Load immediate 1
+    slli    t0, t0, 16      # Create a mask for bit 16 (Timer Interrupt)
+    csrs    mie, t0         # Set the timer bit in the mie register
+    ret
+	# ret is same as jalr x0, 0(ra)
 
-	// Return from function. This is the real instruction for 'ret'.
-	jalr    x0, 0(ra)
+/*
+ * enable_switch_interrupts()
+ * Enables interrupts specifically for the SWITCHES (IRQ 17).
+ */
+.globl enable_switch_interrupts
+enable_switch_interrupts:
+    li      t0, 1           # Load immediate 1
+    slli    t0, t0, 17      # Create a mask for bit 17 (Switch Interrupt)
+    csrs    mie, t0         # Set the switch bit in the mie register
+    ret

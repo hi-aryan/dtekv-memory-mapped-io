@@ -7,6 +7,8 @@
 
 // --- External Assembly Functions ---
 extern void enable_interrupt(void);
+extern void enable_switch_interrupts(void);
+extern void enable_timer_interrupts(void);
 
 // --- Memory-Mapped I/O Addresses (from DTEK-V PDF) ---
 volatile uint32_t * const TIMER_STATUS = (uint32_t *) 0x4000020;
@@ -16,6 +18,8 @@ volatile uint32_t * const TIMER_PERIOD_H = (uint32_t *) 0x400002C;
 
 volatile uint32_t * const SWITCHES = (uint32_t *) 0x4000010;
 volatile uint32_t * const BUTTONS = (uint32_t *) 0x40000d0;
+
+volatile uint32_t * const SWITCH_EDGECAPTURE = (uint32_t *) 0x400001C;
 
 volatile uint8_t * const VGA_BUFFER = (uint8_t *) 0x8000000;
 
@@ -50,6 +54,9 @@ int random_int(int min, int max) {
     return min + (simple_rand() % (max - min + 1));
 }
 
+// --- Simple randomization using timer for entropy ---
+// No complex state machine needed for one-time initialization
+
 // --- Global Game State ---
 Snake snake;
 Point food;
@@ -67,38 +74,56 @@ void draw_rect(int x, int y, int width, int height, uint8_t color);
 unsigned int simple_rand(void);
 void seed_random(unsigned int seed);
 int random_int(int min, int max);
-unsigned int wait_for_button_and_get_timing(void);
+unsigned int get_random_timing(void);
 
 /**
  * @brief Interrupt Service Routine
- * This is the heart of the game. It gets called by the hardware timer.
+ * Handles timer and switch interrupts.
  */
 void handle_interrupt(unsigned cause) {
-    *TIMER_STATUS = 0; // Acknowledge the interrupt
+    // Cause 16 is for the Timer
+    if (cause == 16) {
+        *TIMER_STATUS = 0; // Acknowledge the timer interrupt
 
-    if (game_over) {
-        return; // Stop the game if it's over
+        if (game_over) return;
+
+        tick_counter++;
+        if (tick_counter >= TICKS_PER_MOVE) {
+            tick_counter = 0;
+            // We NO LONGER read input here. The game just updates and draws.
+            update_game(); 
+            draw_graphics();
+        }
+    } 
+    // Cause 17 is for the Switches
+    else if (cause == 17) {
+        // When a switch is flipped, this code runs instantly.
+        read_input();
+        
+        // Acknowledge the interrupt so it doesn't keep firing.
+        // We write to the edge capture register to clear it.
+        *SWITCH_EDGECAPTURE = 0x3FF; // Acknowledge any of the 10 switches
+
+        // Toggle the very first LED every time a switch is flipped.
+        // *LEDS = *LEDS ^ 0x1; 
     }
 
-    tick_counter++;
-    if (tick_counter >= TICKS_PER_MOVE) {
-        tick_counter = 0;
-        update_game();
-        draw_graphics();
-    }
+    // Note: Button interrupts are not needed for the game loop
+    // Randomization uses simple polling during initialization
 }
 
+
 /**
- * @brief Waits for button press and returns timing value for seeding RNG
- * This provides true randomness based on user input timing
+ * @brief Gets random seed using button press timing
+ * Simple polling approach - perfect for one-time initialization
  */
-unsigned int wait_for_button_and_get_timing(void) {
+unsigned int get_random_timing(void) {
     unsigned int start_time = 0;
     unsigned int end_time = 0;
 
     // Wait for button release first (in case it's already pressed)
     while (*BUTTONS & 0x1) {
-        // Busy wait
+        // Busy wait - simple and effective for one-time initialization
     }
 
     // Wait for button press and measure timing
@@ -122,7 +147,7 @@ unsigned int wait_for_button_and_get_timing(void) {
  */
 int main() {
     // Seed random number generator with button press timing
-    unsigned int seed = wait_for_button_and_get_timing();
+    unsigned int seed = get_random_timing();
     seed_random(seed);
 
     initialize_game();
@@ -146,6 +171,9 @@ void initialize_game(void) {
     // Start timer with continuous mode and interrupt enabled
     *TIMER_CONTROL = 0x7; // CONT=1, ITO=1, START=1
 
+    enable_switch_interrupts();
+    enable_timer_interrupts();
+
     // Initialize snake
     snake.length = 3;
     snake.body[0] = (Point){40, 30};
@@ -168,18 +196,22 @@ void initialize_game(void) {
 // TODO: make movement use first 4 SW instead of first 2?
 /**
  * @brief Reads switches to determine snake's next direction.
+ * only called when a switch interrupt occurs.
  */
 void read_input(void) {
-    uint32_t sw_val = *SWITCHES & 0b11; // Use only the first two switches
+    uint32_t sw_val = *SWITCHES & 0b11;
     
-    // sw_val 00: up, 01: down, 10: left, 11: right
-    if (sw_val == 0b00 && snake.direction.y == 0) { // UP
+    // Only change direction if it's not the opposite way
+    if (sw_val == 0b00 && snake.direction.y == 0) { 
         snake.direction = (Point){0, -10};
-    } else if (sw_val == 0b01 && snake.direction.y == 0) { // DOWN
+    } 
+    else if (sw_val == 0b01 && snake.direction.y == 0) { 
         snake.direction = (Point){0, 10};
-    } else if (sw_val == 0b10 && snake.direction.x == 0) { // LEFT
+    } 
+    else if (sw_val == 0b10 && snake.direction.x == 0) {
         snake.direction = (Point){-10, 0};
-    } else if (sw_val == 0b11 && snake.direction.x == 0) { // RIGHT
+    } 
+    else if (sw_val == 0b11 && snake.direction.x == 0) {
         snake.direction = (Point){10, 0};
     }
 }
@@ -189,7 +221,6 @@ void read_input(void) {
  * @brief Updates snake position, checks for collisions and food.
  */
 void update_game(void) {
-    read_input();
 
     // First, calculate the potential new head position
     Point new_head = {snake.body[0].x + snake.direction.x, snake.body[0].y + snake.direction.y};
