@@ -78,6 +78,7 @@ unsigned int random_timer = 0; // Increments every interrupt for random seed
 int menu_selection = 0;          // 0 = one player, 1 = two players (toggled by SW0)
 int last_menu_selection = -1;    // Debouncing: track last value to prevent flicker
 int game_mode = 0;               // 0 = singleplayer, 1 = multiplayer
+int losing_player = -1;          // Multiplayer: which player lost (0 or 1), -1 = no clear loser
 
 // FOR TIMER TESTING
 int test_seconds = 0;
@@ -309,6 +310,9 @@ void reset_game(void) {
     // Reset timer for singleplayer
     test_seconds = 0;
     test_tick_counter = 0;
+    
+    // Reset losing player for multiplayer
+    losing_player = -1;
 }
 
 /**
@@ -367,8 +371,10 @@ void update_game(void) {
     }
     
     // Check head-to-head collision first (multiplayer only)
+    // No clear loser - use points to determine winner
     if (num_snakes == 2) {
         if (new_heads[0].x == new_heads[1].x && new_heads[0].y == new_heads[1].y) {
+            losing_player = -1;  // No clear loser
             current_state = STATE_GAME_OVER;
             return;
         }
@@ -376,25 +382,29 @@ void update_game(void) {
     
     // Check collisions for all snakes
     for (int i = 0; i < num_snakes; i++) {
-        // Check wall collision
+        // Check wall collision - this player loses
         if (check_wall_collision(new_heads[i])) {
+            losing_player = (num_snakes == 2) ? i : -1;
             current_state = STATE_GAME_OVER;
             return;
         }
         
-        // Check self-collision
+        // Check self-collision - this player loses
         if (check_snake_collision(new_heads[i], &snakes[i])) {
+            losing_player = (num_snakes == 2) ? i : -1;
             current_state = STATE_GAME_OVER;
             return;
         }
         
         // Check collision with other snakes (multiplayer only)
+        // No clear loser - use points to determine winner
         if (num_snakes == 2) {
             int other = 1 - i;  // Other snake index
             // Check collision with other snake's entire body
             for (int j = 0; j < snakes[other].length; j++) {
                 if (new_heads[i].x == snakes[other].body[j].x && 
                     new_heads[i].y == snakes[other].body[j].y) {
+                    losing_player = -1;  // No clear loser
                     current_state = STATE_GAME_OVER;
                     return;
                 }
@@ -596,6 +606,45 @@ void draw_game_over(void) {
         int score2 = snakes[1].length - 3;
         for (int i = 0; i < score2 && i < 15; i++) {
             draw_rect(score2_x + (i * 6), score2_y, 4, 4, 0xE0); // Red dots
+        }
+        
+        // Display winner
+        int winner = -1;
+        int is_draw = 0;
+        
+        if (losing_player == 0) {
+            winner = 1;  // Player 1 wins (left switches)
+        } else if (losing_player == 1) {
+            winner = 0;  // Player 0 wins (right switches)
+        } else {
+            // No clear loser - use points to determine winner
+            if (score1 == score2) {
+                is_draw = 1;  // Equal points = draw
+            } else {
+                winner = (score1 > score2) ? 0 : 1;
+            }
+        }
+        
+        // Draw winner text at bottom
+        if (is_draw) {
+            // Draw
+            draw_letter('D', 120, 195, 0xFF);
+            draw_letter('R', 145, 195, 0xFF);
+            draw_letter('A', 170, 195, 0xFF);
+            draw_letter('W', 195, 195, 0xFF);
+        } else if (winner == 0) {
+            // Player 0 wins (right switches)
+            draw_letter('R', 110, 195, 0x1F);
+            draw_letter('I', 135, 195, 0x1F);
+            draw_letter('G', 160, 195, 0x1F);
+            draw_letter('H', 185, 195, 0x1F);
+            draw_letter('T', 210, 195, 0x1F);
+        } else {
+            // Player 1 wins (left switches)
+            draw_letter('L', 125, 195, 0xE0);
+            draw_letter('E', 150, 195, 0xE0);
+            draw_letter('F', 175, 195, 0xE0);
+            draw_letter('T', 200, 195, 0xE0);
         }
     }
 }
