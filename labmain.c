@@ -1,8 +1,6 @@
-// TODO: game-over scene
 // TODO: levels (with ghost hunting you or something)
-// TODO: multiplayer
-// TODO: animations
 // TODO: leaderboard
+// TODO: add speedup switch for multiplayer mode
 
 #include <stdint.h> // For standard integer types
 
@@ -69,16 +67,17 @@ typedef enum {
 // --- Global Game State ---
 GameState current_state = STATE_MENU;
 GameState previous_state = STATE_PLAYING; // Track state changes
-Snake snake;
+Snake snakes[2];  // Support up to 2 players
+int num_snakes = 1;  // 1 for singleplayer, 2 for multiplayer
 Point food;
 int tick_counter = 0;
 int button_pressed_last_frame = 0;
 unsigned int random_timer = 0; // Increments every interrupt for random seed
 
 // --- Menu Selection State ---
-int menu_selection = 0;          // 0 = easy, 1 = hard (toggled by SW0)
+int menu_selection = 0;          // 0 = one player, 1 = two players (toggled by SW0)
 int last_menu_selection = -1;    // Debouncing: track last value to prevent flicker
-int game_difficulty = 0;         // Stored difficulty for current game
+int game_mode = 0;               // 0 = singleplayer, 1 = multiplayer
 
 // FOR TIMER TESTING
 int test_seconds = 0;
@@ -109,7 +108,14 @@ void draw_game_over_animated(void);  // test animation: draw only the animated b
 void draw_pixel(int x, int y, uint8_t color);
 void draw_rect(int x, int y, int width, int height, uint8_t color);
 void set_displays(int display_number, int value);
-void display_score(int score);
+void display_score_single(int score);
+void display_score_multi(int score1, int score2);
+
+// --- Helper Functions for Game Logic ---
+int check_wall_collision(Point p);
+int check_snake_collision(Point p, Snake* s);
+void move_snake(Snake* s);
+void update_snake_direction(Snake* s, uint32_t sw_bits);
 
 // --- Letter Drawing Functions (20x30 px each, data-driven) ---
 void draw_letter(char letter, int x, int y, uint8_t color);
@@ -159,30 +165,29 @@ void handle_interrupt(unsigned cause) {
                 
             case STATE_PLAYING:
                 tick_counter++;
-                // speed is new ticks_per_move
-                int speed = 10;
-                // If switch nr 5 (from right to left) is up, use fast speed
-                if (*SWITCHES & (1 << 4)) {
-                    speed = 5;
-                }
+                int speed = 10;  // Game speed (10 interrupts per move at 30Hz = 3 moves/sec)
 
                 if (tick_counter >= speed) {
                     tick_counter = 0; // update game every speed interrupts
                     update_game();
                     draw_game();
                 }
-                test_tick_counter++;
-                if (test_tick_counter >= 30) {  // 30 interrupts = 1 second at 30Hz
-                    test_tick_counter = 0;
-                    test_seconds++;
-                    if (test_seconds >= 60) {
-                        test_seconds = 0;
+                
+                // Timer only for singleplayer mode (displays 4-5)
+                if (num_snakes == 1) {
+                    test_tick_counter++;
+                    if (test_tick_counter >= 30) {  // 30 interrupts = 1 second at 30Hz
+                        test_tick_counter = 0;
+                        test_seconds++;
+                        if (test_seconds >= 60) {
+                            test_seconds = 0;
+                        }
+                        // Update displays 4-5 with current seconds
+                        int tens = (test_seconds / 10) % 10;
+                        int ones = test_seconds % 10;
+                        set_displays(4, segment_map[ones]);
+                        set_displays(5, segment_map[tens]);
                     }
-                    // Update displays 4-5 with current seconds
-                    int tens = (test_seconds / 10) % 10;
-                    int ones = test_seconds % 10;
-                    set_displays(4, segment_map[ones]);
-                    set_displays(5, segment_map[tens]);
                 }
                 break;
                 
@@ -251,7 +256,8 @@ void initialize_hardware(void) {
     *TIMER_PERIOD_L = 0x423F;
     *TIMER_CONTROL = 0x7;
     
-    *SWITCH_INTERRUPTMASK = 0x3; // Enable interrupts for SW0 and SW1
+    // Initially enable only SW0 for menu navigation
+    *SWITCH_INTERRUPTMASK = 0x1;
     
     enable_switch_interrupts();
     enable_timer_interrupts();
@@ -262,21 +268,47 @@ void initialize_hardware(void) {
  * @brief Resets game state for a new game.
  */
 void reset_game(void) {
-    // Reset snake to initial position
-    snake.length = 3;
-    snake.body[0] = (Point){40, 30};
-    snake.body[1] = (Point){30, 30};
-    snake.body[2] = (Point){20, 30};
-    snake.direction = (Point){10, 0};
+    // Configure switch interrupts based on game mode
+    if (num_snakes == 1) {
+        // Singleplayer: Enable SW0-1 (bits 0-1)
+        *SWITCH_INTERRUPTMASK = 0x3;
+    } else {
+        // Multiplayer: Enable SW0-1 and SW8-9 (bits 0-1, 8-9)
+        *SWITCH_INTERRUPTMASK = 0x303;
+    }
+    
+    // Initialize player 1 snake (top-left)
+    snakes[0].length = 3;
+    snakes[0].body[0] = (Point){40, 30};
+    snakes[0].body[1] = (Point){40, 20};
+    snakes[0].body[2] = (Point){40, 10};
+    snakes[0].direction = (Point){0, 10};  // Moving down
+    
+    // Initialize player 2 snake (bottom-right) if multiplayer
+    if (num_snakes == 2) {
+        snakes[1].length = 3;
+        snakes[1].body[0] = (Point){280, 210};
+        snakes[1].body[1] = (Point){290, 210};
+        snakes[1].body[2] = (Point){300, 210};
+        snakes[1].direction = (Point){-10, 0};  // Moving left
+    }
 
-    // Initialize score display (shows 0)
-    display_score(snake.length);
+    // Initialize score display
+    if (num_snakes == 1) {
+        display_score_single(snakes[0].length - 3);
+    } else {
+        display_score_multi(snakes[0].length - 3, snakes[1].length - 3);
+    }
 
     // Place food at random position
     food.x = random_int(0, 31) * 10;
     food.y = random_int(0, 23) * 10;
 
     tick_counter = 0;
+    
+    // Reset timer for singleplayer
+    test_seconds = 0;
+    test_tick_counter = 0;
 }
 
 /**
@@ -288,9 +320,9 @@ void check_button_input(void) {
     // Detect button press edge (was not pressed, now pressed)
     if (button_pressed_now && !button_pressed_last_frame) {
         if (current_state == STATE_MENU) {
-            
-            // TODO: selected difficulty stored for future use
-            game_difficulty = menu_selection;
+            // Store selected game mode (0=single, 1=multi)
+            game_mode = menu_selection;
+            num_snakes = (game_mode == 0) ? 1 : 2;
             
             // Seed with timer value - different each time button is pressed
             seed_random(random_timer);
@@ -308,23 +340,17 @@ void check_button_input(void) {
 }
 
 /**
- * @brief Reads switches to determine snake's next direction.
+ * @brief Reads switches to determine snakes' next directions.
  */
 void read_input(void) {
-    uint32_t sw_val = *SWITCHES & 0b11;
+    uint32_t switches = *SWITCHES;
     
-    // Only change direction if not opposite
-    if (sw_val == 0b00 && snake.direction.y == 0) { 
-        snake.direction = (Point){0, -10};
-    } 
-    else if (sw_val == 0b01 && snake.direction.y == 0) { 
-        snake.direction = (Point){0, 10};
-    } 
-    else if (sw_val == 0b10 && snake.direction.x == 0) {
-        snake.direction = (Point){-10, 0};
-    } 
-    else if (sw_val == 0b11 && snake.direction.x == 0) {
-        snake.direction = (Point){10, 0};
+    // Player 1: SW0-1 (bits 0-1)
+    update_snake_direction(&snakes[0], switches & 0b11);
+    
+    // Player 2: SW8-9 (bits 8-9) if multiplayer
+    if (num_snakes == 2) {
+        update_snake_direction(&snakes[1], (switches >> 8) & 0b11);
     }
 }
 
@@ -333,69 +359,93 @@ void read_input(void) {
  * @brief Updates snake position, checks for collisions and food.
  */
 void update_game(void) {
-    // Calculate new head position
-    Point new_head = {
-        snake.body[0].x + snake.direction.x, 
-        snake.body[0].y + snake.direction.y
-    };
-
-    // Check wall collision
-    if (new_head.x < 0 || new_head.x >= SCREEN_WIDTH || 
-        new_head.y < 0 || new_head.y >= SCREEN_HEIGHT) {
-        current_state = STATE_GAME_OVER;
-        return;
+    // Calculate new head positions for all snakes
+    Point new_heads[2];
+    for (int i = 0; i < num_snakes; i++) {
+        new_heads[i].x = snakes[i].body[0].x + snakes[i].direction.x;
+        new_heads[i].y = snakes[i].body[0].y + snakes[i].direction.y;
     }
-
-    // Check self-collision
-    for (int i = 1; i < snake.length; i++) {
-        if (new_head.x == snake.body[i].x && new_head.y == snake.body[i].y) {
+    
+    // Check head-to-head collision first (multiplayer only)
+    if (num_snakes == 2) {
+        if (new_heads[0].x == new_heads[1].x && new_heads[0].y == new_heads[1].y) {
             current_state = STATE_GAME_OVER;
             return;
         }
     }
-
-    // If we're here, the move is safe. Now we update the snake's body.
-    for (int i = snake.length - 1; i > 0; i--) {
-        snake.body[i] = snake.body[i - 1];
-    }
-    snake.body[0] = new_head;
     
-    // Check food collision
-    if (new_head.x == food.x && new_head.y == food.y) {
-        // Initialize the new tail segment immediately ---
-        // Get the position of the old tail before we increment length
-        Point old_tail_pos = snake.body[snake.length - 1];
-        snake.length++; // Now increase the length
-
-        // Update score display on 7-segment displays
-        display_score(snake.length);
-
-        // The new tail segment is at the new end of the array. Give it a valid position.
-        snake.body[snake.length - 1] = old_tail_pos;
-
-        // Relocate food to new random position
-        // Avoid placing food on snake body by checking collisions
-        int attempts = 0;
-        const int MAX_ATTEMPTS = 100;
-
-        do {
-            food.x = random_int(0, 31) * 10;
-            food.y = random_int(0, 23) * 10;
-            attempts++;
-
-            // Check if food position conflicts with snake body
-            int collision = 0;
-            for (int i = 0; i < snake.length && !collision; i++) {
-                if (food.x == snake.body[i].x && food.y == snake.body[i].y) {
-                    collision = 1;
+    // Check collisions for all snakes
+    for (int i = 0; i < num_snakes; i++) {
+        // Check wall collision
+        if (check_wall_collision(new_heads[i])) {
+            current_state = STATE_GAME_OVER;
+            return;
+        }
+        
+        // Check self-collision
+        if (check_snake_collision(new_heads[i], &snakes[i])) {
+            current_state = STATE_GAME_OVER;
+            return;
+        }
+        
+        // Check collision with other snakes (multiplayer only)
+        if (num_snakes == 2) {
+            int other = 1 - i;  // Other snake index
+            // Check collision with other snake's entire body
+            for (int j = 0; j < snakes[other].length; j++) {
+                if (new_heads[i].x == snakes[other].body[j].x && 
+                    new_heads[i].y == snakes[other].body[j].y) {
+                    current_state = STATE_GAME_OVER;
+                    return;
                 }
             }
-
-            if (!collision) break;
-        } while (attempts < MAX_ATTEMPTS);
-
-        // If we couldn't find a safe spot after many attempts, just place it anyway
-        // This prevents infinite loops in edge cases
+        }
+    }
+    
+    // All moves are safe - update all snakes
+    for (int i = 0; i < num_snakes; i++) {
+        move_snake(&snakes[i]);
+    }
+    
+    // Check food collision for all snakes
+    for (int i = 0; i < num_snakes; i++) {
+        if (snakes[i].body[0].x == food.x && snakes[i].body[0].y == food.y) {
+            // Grow snake
+            Point old_tail_pos = snakes[i].body[snakes[i].length - 1];
+            snakes[i].length++;
+            snakes[i].body[snakes[i].length - 1] = old_tail_pos;
+            
+            // Update score display
+            if (num_snakes == 1) {
+                display_score_single(snakes[0].length - 3);
+            } else {
+                display_score_multi(snakes[0].length - 3, snakes[1].length - 3);
+            }
+            
+            // Relocate food to new random position
+            int attempts = 0;
+            const int MAX_ATTEMPTS = 100;
+            
+            do {
+                food.x = random_int(0, 31) * 10;
+                food.y = random_int(0, 23) * 10;
+                attempts++;
+                
+                // Check if food position conflicts with any snake body
+                int collision = 0;
+                for (int s = 0; s < num_snakes && !collision; s++) {
+                    for (int j = 0; j < snakes[s].length && !collision; j++) {
+                        if (food.x == snakes[s].body[j].x && food.y == snakes[s].body[j].y) {
+                            collision = 1;
+                        }
+                    }
+                }
+                
+                if (!collision) break;
+            } while (attempts < MAX_ATTEMPTS);
+            
+            break;  // Only one snake can eat per frame
+        }
     }
 }
 
@@ -444,20 +494,22 @@ void draw_menu(void) {
     draw_letter('C', 170, 200, 0xFF);
     draw_letter('T', 195, 200, 0xFF);
 
-    // --- Difficulty Selection (SW0 toggles) ---
-    // EASY - highlighted if menu_selection == 0
-    uint8_t easy_color = (menu_selection == 0) ? 0x1D : 0x24;  // Bright green if selected, dim if not
-    draw_letter('E', 215, 90, easy_color);
-    draw_letter('A', 240, 90, easy_color);
-    draw_letter('S', 265, 90, easy_color);
-    draw_letter('Y', 290, 90, easy_color);
+    // --- Game Mode Selection (SW0 toggles) ---
+    // ONE P - highlighted if menu_selection == 0
+    uint8_t one_p_color = (menu_selection == 0) ? 0x1D : 0x24;  // Bright green if selected, dim if not
+    draw_letter('O', 215, 90, one_p_color);
+    draw_letter('N', 240, 90, one_p_color);
+    draw_letter('E', 265, 90, one_p_color);
     
-    // HARD - highlighted if menu_selection == 1
-    uint8_t hard_color = (menu_selection == 1) ? 0xE1 : 0x24;  // Bright red if selected, dim if not
-    draw_letter('H', 215, 130, hard_color);
-    draw_letter('A', 240, 130, hard_color);
-    draw_letter('R', 265, 130, hard_color);
-    draw_letter('D', 290, 130, hard_color);
+    draw_letter('P', 295, 90, one_p_color);
+    
+    // TWO P - highlighted if menu_selection == 1
+    uint8_t two_p_color = (menu_selection == 1) ? 0xE1 : 0x24;  // Bright red if selected, dim if not
+    draw_letter('T', 215, 130, two_p_color);
+    draw_letter('W', 240, 130, two_p_color);
+    draw_letter('O', 265, 130, two_p_color);
+    
+    draw_letter('P', 295, 130, two_p_color);
 
     // FOR TEST ALL LETTERS
     
@@ -480,9 +532,16 @@ void draw_menu(void) {
 void draw_game(void) {
     clear_screen(0x00); // Black background
     
-    // Draw snake
-    for (int i = 0; i < snake.length; i++) {
-        draw_rect(snake.body[i].x, snake.body[i].y, 10, 10, 0xE0); // White
+    // Draw player 1 snake (cyan/blue)
+    for (int i = 0; i < snakes[0].length; i++) {
+        draw_rect(snakes[0].body[i].x, snakes[0].body[i].y, 10, 10, 0x1F);
+    }
+    
+    // Draw player 2 snake (red) if multiplayer
+    if (num_snakes == 2) {
+        for (int i = 0; i < snakes[1].length; i++) {
+            draw_rect(snakes[1].body[i].x, snakes[1].body[i].y, 10, 10, 0xE0);
+        }
     }
     
     // Draw food
@@ -512,12 +571,32 @@ void draw_game_over(void) {
     draw_rect(240, 67, 3, 3, 0xE0); // red box
     draw_rect(248, 67, 3, 3, 0xE0); // red box
 
-    // score indicator (simple visual representation)
-    // Draw small squares to represent score (snake length)
-    int score_x = 100;
-    int score_y = 140;
-    for (int i = 0; i < snake.length && i < 20; i++) {
-        draw_rect(score_x + (i * 6), score_y, 4, 4, 0x1C); // Green dots
+    // Score display
+    if (num_snakes == 1) {
+        // Single player: show one score
+        int score_x = 100;
+        int score_y = 140;
+        int score = snakes[0].length - 3;
+        for (int i = 0; i < score && i < 20; i++) {
+            draw_rect(score_x + (i * 6), score_y, 4, 4, 0x1F); // Cyan dots
+        }
+    } else {
+        // Multiplayer: show both scores
+        // Player 1 (cyan)
+        int score1_x = 80;
+        int score1_y = 120;
+        int score1 = snakes[0].length - 3;
+        for (int i = 0; i < score1 && i < 15; i++) {
+            draw_rect(score1_x + (i * 6), score1_y, 4, 4, 0x1F); // Cyan dots
+        }
+        
+        // Player 2 (red)
+        int score2_x = 80;
+        int score2_y = 160;
+        int score2 = snakes[1].length - 3;
+        for (int i = 0; i < score2 && i < 15; i++) {
+            draw_rect(score2_x + (i * 6), score2_y, 4, 4, 0xE0); // Red dots
+        }
     }
 }
 
@@ -532,28 +611,45 @@ void draw_game_over_animated(void) {
 }
 
 /**
- * @brief Displays the score on the 7-segment displays.
- * Shows a 4-digit number (padded with leading zeros if needed).
- * @param score The score to display (snake length - initial length)
+ * @brief Displays the score for single player on 7-segment displays 0-3.
+ * @param score The score to display (already adjusted)
  */
-void display_score(int score) {
-    // Calculate actual score (initial length was 3, so subtract 3)
-    int actual_score = score - 3;
-
+void display_score_single(int score) {
     // Extract individual digits (thousands, hundreds, tens, ones)
-    int thousands = (actual_score / 1000) % 10;
-    int hundreds  = (actual_score / 100) % 10;
-    int tens      = (actual_score / 10) % 10;
-    int ones      = actual_score % 10;
+    int thousands = (score / 1000) % 10;
+    int hundreds  = (score / 100) % 10;
+    int tens      = (score / 10) % 10;
+    int ones      = score % 10;
 
     // Display on 7-segment displays (rightmost is display 0)
     set_displays(0, segment_map[ones]);
     set_displays(1, segment_map[tens]);
     set_displays(2, segment_map[hundreds]);
     set_displays(3, segment_map[thousands]);
+}
 
-    // set_displays(4, segment_map[0]); // Always show 0 for now
-    // set_displays(5, segment_map[0]); // Always show 0 for now
+/**
+ * @brief Displays scores for both players in multiplayer mode.
+ * Player 1 on displays 0-1 (rightmost), Player 2 on displays 4-5 (leftmost).
+ * @param score1 Player 1 score (already adjusted)
+ * @param score2 Player 2 score (already adjusted)
+ */
+void display_score_multi(int score1, int score2) {
+    // Player 1 (rightmost switches): displays 0-1 (rightmost)
+    int p1_tens = (score1 / 10) % 10;
+    int p1_ones = score1 % 10;
+    set_displays(0, segment_map[p1_ones]);
+    set_displays(1, segment_map[p1_tens]);
+    
+    // Displays 2-3: show zeros (unused)
+    set_displays(2, segment_map[0]);
+    set_displays(3, segment_map[0]);
+    
+    // Player 2 (leftmost switches): displays 4-5 (leftmost)
+    int p2_tens = (score2 / 10) % 10;
+    int p2_ones = score2 % 10;
+    set_displays(4, segment_map[p2_ones]);
+    set_displays(5, segment_map[p2_tens]);
 }
 
 /**
@@ -573,6 +669,72 @@ void draw_rect(int x_start, int y_start, int width, int height, uint8_t color) {
         for (int x = x_start; x < x_start + width; x++) {
             draw_pixel(x, y, color);
         }
+    }
+}
+
+// ============================================================================
+// GAME LOGIC HELPER FUNCTIONS (OOP approach to avoid code duplication)
+// ============================================================================
+
+/**
+ * @brief Checks if a point collides with a wall.
+ * @param p Point to check
+ * @return 1 if collision, 0 otherwise
+ */
+int check_wall_collision(Point p) {
+    return (p.x < 0 || p.x >= SCREEN_WIDTH || p.y < 0 || p.y >= SCREEN_HEIGHT);
+}
+
+/**
+ * @brief Checks if a point collides with a snake's body (excluding head).
+ * @param p Point to check
+ * @param s Snake to check against
+ * @return 1 if collision, 0 otherwise
+ */
+int check_snake_collision(Point p, Snake* s) {
+    for (int i = 1; i < s->length; i++) {
+        if (p.x == s->body[i].x && p.y == s->body[i].y) {
+            return 1;
+        }
+    }
+    return 0;
+}
+
+/**
+ * @brief Moves a snake forward in its current direction.
+ * @param s Snake to move
+ */
+void move_snake(Snake* s) {
+    Point new_head = {
+        s->body[0].x + s->direction.x,
+        s->body[0].y + s->direction.y
+    };
+    
+    // Shift body segments
+    for (int i = s->length - 1; i > 0; i--) {
+        s->body[i] = s->body[i - 1];
+    }
+    s->body[0] = new_head;
+}
+
+/**
+ * @brief Updates snake direction based on switch input.
+ * @param s Snake to update
+ * @param sw_bits Two-bit switch value (00, 01, 10, 11)
+ */
+void update_snake_direction(Snake* s, uint32_t sw_bits) {
+    // Only change direction if not opposite to current direction
+    if (sw_bits == 0b00 && s->direction.y == 0) { 
+        s->direction = (Point){0, -10};  // Up
+    } 
+    else if (sw_bits == 0b01 && s->direction.y == 0) { 
+        s->direction = (Point){0, 10};   // Down
+    } 
+    else if (sw_bits == 0b10 && s->direction.x == 0) {
+        s->direction = (Point){-10, 0};  // Left
+    } 
+    else if (sw_bits == 0b11 && s->direction.x == 0) {
+        s->direction = (Point){10, 0};   // Right
     }
 }
 
