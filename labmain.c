@@ -371,10 +371,10 @@ void update_game(void) {
     }
     
     // Check head-to-head collision first (multiplayer only)
-    // No clear loser - use points to determine winner
     if (num_snakes == 2) {
         if (new_heads[0].x == new_heads[1].x && new_heads[0].y == new_heads[1].y) {
-            losing_player = -1;  // No clear loser
+            // Both snakes moving to same position - use points to determine winner
+            losing_player = -1;
             current_state = STATE_GAME_OVER;
             return;
         }
@@ -396,15 +396,15 @@ void update_game(void) {
             return;
         }
         
-        // Check collision with other snakes (multiplayer only)
-        // No clear loser - use points to determine winner
+        // Check head-to-body collision with other snake (multiplayer only)
         if (num_snakes == 2) {
             int other = 1 - i;  // Other snake index
-            // Check collision with other snake's entire body
-            for (int j = 0; j < snakes[other].length; j++) {
+            // Start from j=1 to skip the other snake's head (already checked above)
+            for (int j = 1; j < snakes[other].length; j++) {
                 if (new_heads[i].x == snakes[other].body[j].x && 
                     new_heads[i].y == snakes[other].body[j].y) {
-                    losing_player = -1;  // No clear loser
+                    // Head-to-body collision - this player (i) loses
+                    losing_player = i;
                     current_state = STATE_GAME_OVER;
                     return;
                 }
