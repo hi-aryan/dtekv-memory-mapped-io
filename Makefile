@@ -2,7 +2,7 @@ SRC_DIR ?= ./
 OBJ_DIR ?= ./
 # Compile all necessary files for the embedded system
 # Include snake.c, dtekv-lib.c, and all .S files, but exclude labmain.c
-SOURCES ?= labmain.c dtekv-lib.c boot.S timetemplate.S hex2asc.S analyze.S
+SOURCES ?= labmain.c dtekv-lib.c boot.S
 OBJECTS ?= $(addsuffix .o, $(basename $(notdir $(SOURCES))))
 LINKER ?= $(SRC_DIR)/dtekv-script.lds
 

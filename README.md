@@ -7,7 +7,6 @@ A two-player Snake game implementation for the DTEK-V board with VGA output and 
 - VGA graphics output (320x240)
 - 7-segment display score tracking
 - Switch-based controls
-- Performance analysis mode (SW7)
 
 ## Prerequisites
 - DTEK-V toolchain installed
@@ -21,7 +20,7 @@ A two-player Snake game implementation for the DTEK-V board with VGA output and 
 make
 ```
 
-This generates `main.bin` which can be loaded onto the board.
+This generates `main.bin` which can be loaded onto the board or onto an emulator such as [this one](https://dtekv.fritiof.dev/)
 
 ## Running on Board
 
@@ -44,8 +43,5 @@ dtekv-run main.bin
 - **Player 1 (Right)**: SW0-1
 - **Player 2 (Left)**: SW8-9
 
-### Performance Analysis
-- **SW7**: Toggle performance counter analysis (during gameplay)
-
 ## Game Objective
-Eat green food squares to grow your snake. Avoid walls and colliding with yourself (or the other player in multiplayer mode).
+Eat green food squares to grow your snake as big as possible. Avoid walls and colliding with yourself (or the other player in multiplayer mode).

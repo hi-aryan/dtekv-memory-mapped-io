@@ -158,7 +158,7 @@ void handle_interrupt(unsigned cause) {
             previous_state = current_state;
         }
         
-        // State machine: different behavior per state
+        // State machine: different behavior depending on the state
         switch (current_state) {
             case STATE_MENU:
                 check_button_input();
@@ -363,7 +363,7 @@ void read_input(void) {
  * @brief Updates snake position, checks for collisions and food.
  */
 void update_game(void) {
-    // Calculate new head positions for all snakes
+    // Calculate new head positions for all snakes (for collision checking)
     Point new_heads[2];
     for (int i = 0; i < num_snakes; i++) {
         new_heads[i].x = snakes[i].body[0].x + snakes[i].direction.x;
@@ -380,7 +380,7 @@ void update_game(void) {
         }
     }
     
-    // Check collisions for all snakes
+    // Check collisions for all snakes BEFORE moving them
     for (int i = 0; i < num_snakes; i++) {
         // Check wall collision - this player loses
         if (check_wall_collision(new_heads[i])) {
